@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Backyard Bubbles</string>
+    <string name="title_activity_main">Backyard Bubbles</string>
+    <string name="package_name">com.kuhiopalms.backyardbubbles</string>
+    <string name="custom_url_scheme">com.kuhiopalms.backyardbubbles</string>
+</resources>

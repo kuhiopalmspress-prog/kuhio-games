@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Backyard Bubbles</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#9fd8ff;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  #score{position:fixed;top:14px;left:18px;font-size:30px;font-weight:800;color:#fff;text-shadow:0 2px 5px rgba(0,0,0,.35);pointer-events:none}
+  #bar{position:fixed;left:0;right:0;bottom:14px;display:flex;flex-wrap:wrap;justify-content:center;gap:10px;padding:0 10px;pointer-events:none}
+  #bar button{pointer-events:auto;font:700 22px system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px 18px;border:0;border-radius:18px;background:#fff;color:#1d3b2a;box-shadow:0 4px 0 rgba(0,0,0,.2);cursor:pointer}
+  #bar button.on{background:#ffd23f}
+  #bar button:active{transform:translateY(2px)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="score">Pops: 0</div>
+<div id="bar">
+  <button data-scene="swings" class="on">Swing Set</button>
+  <button data-scene="sandbox">Sandbox</button>
+  <button data-scene="sprinkler">Sprinkler</button>
+  <button data-tool="wand" class="on">Wand</button>
+  <button data-tool="gun">Bubble Gun</button>
+  <button data-tool="machine">Giant Bubble</button>
+  <button id="mute">Sound: On</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+let W, H;
+function resize() {
+  const d = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * d; cv.height = H * d;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+const SCENES = {
+  swings:    { sky: ['#6cc8ff', '#e0f6ff'], sun: '#fff6b0', grass: '#7ccf5a' },
+  sandbox:   { sky: ['#ffab73', '#ffe9c7'], sun: '#ffe066', grass: '#8fd65f' },
+  sprinkler: { sky: ['#4fbaf5', '#c8efff'], sun: '#fff6b0', grass: '#58bd45' },
+};
+const HUES = [0, 45, 110, 190, 230, 280, 320];
+
+let scene = 'swings', tool = 'wand', muted = false, ac = null;
+let bubbles = [], parts = [], pops = 0;
+let down = false, px = 0, py = 0, lastSpawn = -1e9;
+
+function line(a, b, c, d) { ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.stroke(); }
+
+function drawCloud(x, y, s) {
+  ctx.fillStyle = 'rgba(255,255,255,.92)';
+  for (const [dx, dy, r] of [[0, 0, 40], [32, -12, 32], [-30, -6, 28], [62, 4, 24]]) {
+    ctx.beginPath(); ctx.arc(x + dx * s, y + dy * s, r * s, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawSwings(t, gy) {
+  const top = gy - H * 0.36, lx = W * 0.06;
+  ctx.fillStyle = '#8a5a2b'; ctx.fillRect(W * 0.1 - 7, gy - H * 0.28, 14, H * 0.28);
+  ctx.fillStyle = '#3f9a3f';
+  for (const [dx, dy, r] of [[0, 0, W * 0.09], [-W * 0.05, W * 0.02, W * 0.06], [W * 0.05, W * 0.02, W * 0.06]]) {
+    ctx.beginPath(); ctx.arc(W * 0.1 + dx, gy - H * 0.32 + dy, r, 0, Math.PI * 2); ctx.fill();
+  }
+  const x0 = W * 0.5, x1 = W * 0.92;
+  ctx.strokeStyle = '#e0533e'; ctx.lineWidth = Math.max(5, W * 0.008); ctx.lineCap = 'round';
+  line(x0, gy, x0 + lx, top); line(x1, gy, x1 - lx, top); line(x0 + lx, top, x1 - lx, top);
+  const L = H * 0.24;
+  for (const [sx, ph] of [[W * 0.62, 0], [W * 0.8, 1.3]]) {
+    const a = Math.sin(t * 1.3 + ph) * 0.32;
+    const cx = sx + Math.sin(a) * L, cy = top + Math.cos(a) * L, w = W * 0.035;
+    ctx.strokeStyle = '#4a4a4a'; ctx.lineWidth = 2.5;
+    line(sx, top, cx - w, cy); line(sx, top, cx + w, cy);
+    ctx.strokeStyle = '#2f7fd1'; ctx.lineWidth = Math.max(6, H * 0.012);
+    line(cx - w, cy, cx + w, cy);
+  }
+}
+
+function drawSandbox(gy) {
+  const bx = W * 0.08, bw = W * 0.3, by = gy - H * 0.07, bh = H * 0.07 + 8;
+  ctx.fillStyle = '#b9722f'; ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = '#f3cf86'; ctx.fillRect(bx + 10, by + 10, bw - 20, bh - 10);
+  const top = gy - H * 0.3, sx = W * 0.56;
+  ctx.strokeStyle = '#4fb3ff'; ctx.lineWidth = Math.max(5, W * 0.007); ctx.lineCap = 'round';
+  line(sx, top, sx, gy); line(sx + W * 0.05, top, sx + W * 0.05, gy);
+  for (let y = top + H * 0.05; y < gy; y += H * 0.07) line(sx, y, sx + W * 0.05, y);
+  ctx.fillStyle = '#4fb3ff'; ctx.fillRect(sx - W * 0.01, top - H * 0.02, W * 0.08, H * 0.02);
+  ctx.fillStyle = '#ff6f61'; ctx.beginPath();
+  ctx.moveTo(sx + W * 0.07, top); ctx.lineTo(sx + W * 0.25, gy); ctx.lineTo(sx + W * 0.27, gy - H * 0.02); ctx.lineTo(sx + W * 0.08, top + H * 0.02);
+  ctx.closePath(); ctx.fill();
+  const r = Math.min(W, H) * 0.035;
+  ctx.fillStyle = '#ff4d6d'; ctx.beginPath(); ctx.arc(W * 0.5, gy - r * 0.2, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.beginPath(); ctx.arc(W * 0.5 - r * 0.35, gy - r * 0.6, r * 0.25, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawSprinkler(t, gy) {
+  const hx = W * 0.5, hy = gy - H * 0.01;
+  ctx.fillStyle = '#2e7d4f'; ctx.fillRect(hx - 5, hy - H * 0.04, 10, H * 0.04);
+  ctx.fillStyle = '#9ad8ff'; ctx.beginPath(); ctx.arc(hx, hy - H * 0.045, 9, 0, Math.PI * 2); ctx.fill();
+  for (const side of [-1, 1]) for (let i = 0; i < 22; i++) {
+    const f = (i / 22 + t * 0.45) % 1;
+    const x = hx + side * f * W * 0.2, y = hy - H * 0.05 - Math.sin(f * Math.PI) * H * 0.2;
+    ctx.fillStyle = 'rgba(190,235,255,.9)'; ctx.beginPath(); ctx.arc(x, y, 4 + (1 - f) * 3, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawScene(t) {
+  const s = SCENES[scene], gy = H * 0.72;
+  const g = ctx.createLinearGradient(0, 0, 0, gy);
+  g.addColorStop(0, s.sky[0]); g.addColorStop(1, s.sky[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = s.sun; ctx.beginPath(); ctx.arc(W * 0.86, H * 0.14, Math.min(W, H) * 0.06, 0, Math.PI * 2); ctx.fill();
+  drawCloud(((W * 0.2 + t * 12) % (W * 1.4)) - W * 0.2, H * 0.17, 1);
+  drawCloud(((W * 0.6 + t * 8) % (W * 1.4)) - W * 0.2, H * 0.09, 0.7);
+
+  ctx.fillStyle = '#f7ecd2';
+  const pw = Math.max(22, W / 20);
+  for (let x = 0; x < W; x += pw) {
+    ctx.fillRect(x + 3, H * 0.5, pw - 6, gy - H * 0.5 + 6);
+    ctx.beginPath(); ctx.moveTo(x + 3, H * 0.5); ctx.lineTo(x + pw / 2, H * 0.5 - pw * 0.45); ctx.lineTo(x + pw - 3, H * 0.5); ctx.fill();
+  }
+
+  ctx.fillStyle = s.grass; ctx.fillRect(0, gy, W, H - gy);
+  for (let i = 0; i < 8; i += 2) { ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fillRect(0, gy + i * (H - gy) / 8, W, (H - gy) / 8); }
+  for (let i = 0; i < 18; i++) {
+    const fx = ((i * 263) % 997) / 997 * W, fy = gy + H * 0.03 + ((i * 131) % 89) / 89 * H * 0.2;
+    ctx.fillStyle = `hsl(${(i * 73) % 360} 85% 70%)`;
+    ctx.beginPath(); ctx.arc(fx, fy, Math.max(4, W * 0.006), 0, Math.PI * 2); ctx.fill();
+  }
+
+  if (scene === 'swings') drawSwings(t, gy);
+  else if (scene === 'sandbox') drawSandbox(gy);
+  else drawSprinkler(t, gy);
+}
+
+function spawn(x, y, r, vx, vy, big) {
+  bubbles.push({ x, y, r, vx, vy, big, hue: HUES[(Math.random() * HUES.length) | 0] + Math.random() * 25, age: 0, wob: Math.random() * 6.28 });
+  if (bubbles.length > 240) bubbles.shift();
+}
+
+function spawnFrom(x, y) {
+  const R = Math.random;
+  if (tool === 'wand') spawn(x, y, 16 + R() * 16, (R() - 0.5) * 20, -(45 + R() * 35), false);
+  else if (tool === 'gun') for (let i = 0; i < 2; i++) spawn(x + (R() - 0.5) * 12, y, 8 + R() * 12, (R() - 0.5) * 120, -(150 + R() * 90), false);
+  else spawn(x, y, Math.min(W, H) * 0.08, 0, -26, true);
+}
+
+function playPop() {
+  if (!ac || muted) return;
+  const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.frequency.setValueAtTime(700 + Math.random() * 700, t);
+  o.frequency.exponentialRampToValueAtTime(90, t + 0.12);
+  g.gain.setValueAtTime(0.3, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + 0.15);
+}
+
+function popAt(i) {
+  const b = bubbles[i];
+  bubbles.splice(i, 1);
+  pops++; $('score').textContent = 'Pops: ' + pops;
+  for (let k = 0; k < 10; k++) parts.push({ x: b.x, y: b.y, vx: (Math.random() - 0.5) * 300, vy: (Math.random() - 0.5) * 300 - 60, life: 0.5 + Math.random() * 0.3, hue: b.hue });
+  if (b.big) for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; spawn(b.x + Math.cos(a) * b.r * 0.6, b.y + Math.sin(a) * b.r * 0.6, b.r * 0.35, Math.cos(a) * 90, -90, false); }
+  playPop();
+}
+
+function hit(x, y) {
+  for (let i = bubbles.length - 1; i >= 0; i--) {
+    const b = bubbles[i];
+    if ((b.x - x) ** 2 + (b.y - y) ** 2 < (b.r + 6) ** 2) popAt(i);
+  }
+}
+
+function update(dt) {
+  for (let i = bubbles.length - 1; i >= 0; i--) {
+    const b = bubbles[i]; b.age += dt;
+    b.x += (b.vx + Math.sin(b.age * 2.2 + b.wob) * 14) * dt;
+    b.y += b.vy * dt;
+    if (b.y + b.r < -20 || b.x < -60 || b.x > W + 60 || b.age > 14) bubbles.splice(i, 1);
+  }
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt; p.vy += 500 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+}
+
+function drawBubble({ x, y, r, hue }) {
+  const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+  g.addColorStop(0, `hsla(${hue},100%,96%,.05)`);
+  g.addColorStop(0.7, `hsla(${hue},100%,75%,.22)`);
+  g.addColorStop(1, `hsla(${hue},100%,65%,.55)`);
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = `hsla(${hue},100%,90%,.9)`; ctx.lineWidth = Math.max(1.5, r * 0.06); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.beginPath(); ctx.ellipse(x - r * 0.4, y - r * 0.45, r * 0.18, r * 0.1, -0.6, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawParts() {
+  for (const p of parts) {
+    ctx.fillStyle = `hsla(${p.hue},100%,70%,${Math.max(0, p.life * 2)})`;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+cv.addEventListener('pointerdown', e => {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === 'suspended') ac.resume();
+  down = true; px = e.clientX; py = e.clientY; lastSpawn = -1e9; hit(px, py);
+});
+cv.addEventListener('pointermove', e => { px = e.clientX; py = e.clientY; if (down) hit(px, py); });
+addEventListener('pointerup', () => down = false);
+addEventListener('pointercancel', () => down = false);
+
+function mark(sel, b) { document.querySelectorAll(sel).forEach(x => x.classList.toggle('on', x === b)); }
+document.querySelectorAll('[data-scene]').forEach(b => b.onclick = () => { scene = b.dataset.scene; mark('[data-scene]', b); });
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { tool = b.dataset.tool; mark('[data-tool]', b); });
+$('mute').onclick = () => { muted = !muted; $('mute').textContent = 'Sound: ' + (muted ? 'Off' : 'On'); };
+
+let last = performance.now(), t = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
+  if (down && now - lastSpawn > (tool === 'gun' ? 70 : tool === 'wand' ? 180 : 1e9)) { lastSpawn = now; spawnFrom(px, py); }
+  update(dt);
+  drawScene(t);
+  for (const b of bubbles) drawBubble(b);
+  drawParts();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
