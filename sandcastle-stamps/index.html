@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Sandcastle Stamps</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#f2d59c;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  #hint{position:fixed;top:14px;left:0;right:0;text-align:center;font-size:24px;font-weight:700;color:#5d4037;pointer-events:none}
+  #bar{position:fixed;left:0;right:0;bottom:14px;display:flex;flex-wrap:wrap;justify-content:center;gap:10px;padding:0 10px;pointer-events:none}
+  #bar button{pointer-events:auto;font:700 22px system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px 18px;border:0;border-radius:18px;background:#fff;color:#1d3b2a;box-shadow:0 4px 0 rgba(0,0,0,.2);cursor:pointer}
+  #bar button.on{background:#ffd23f}
+  #bar button:active{transform:translateY(2px)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">Press and drag to stamp the sand. Nothing can go wrong!</div>
+<div id="bar">
+  <button data-mold="shell" class="on">Shell</button>
+  <button data-mold="star">Star</button>
+  <button data-mold="bucket">Bucket</button>
+  <button data-mold="flag">Flag</button>
+  <button id="clear">Smooth sand</button>
+  <button id="mute">Sound: On</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+let W, H, S, stamps = [], mold = 'shell', down = false, lastX = 0, lastY = 0, px = -999, py = -999, speck = [], ac = null, muted = false;
+
+function resize() {
+  const d = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * d; cv.height = H * d;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  S = Math.min(W, H) * 0.06;
+  speck = Array.from({ length: Math.round(W * H / 500) }, () => [Math.random() * W, Math.random() * H, Math.random() < 0.5]);
+}
+addEventListener('resize', resize);
+
+function tone(f, d, type = 'sine', v = 0.25) {
+  if (!ac || muted) return;
+  const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 1.4, t + d);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + d + 0.02);
+}
+
+function moldPath(type) {
+  ctx.beginPath();
+  if (type === 'shell') {
+    ctx.moveTo(0, 0); ctx.arc(0, 0, S, Math.PI * 1.15, Math.PI * 1.85); ctx.closePath();
+  } else if (type === 'star') {
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? S * 0.45 : S;
+      ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    ctx.closePath();
+  } else if (type === 'bucket') {
+    ctx.moveTo(-S * 0.8, -S * 0.5); ctx.lineTo(S * 0.8, -S * 0.5); ctx.lineTo(S * 0.55, S * 0.8); ctx.lineTo(-S * 0.55, S * 0.8); ctx.closePath();
+  } else {
+    ctx.rect(-S * 0.06, -S, S * 0.12, S * 2);
+    ctx.moveTo(S * 0.06, -S); ctx.lineTo(S * 0.95, -S * 0.55); ctx.lineTo(S * 0.06, -S * 0.1); ctx.closePath();
+  }
+}
+
+function drawStamp(type, x, y, rot, alpha) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.globalAlpha = alpha;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.save(); ctx.translate(-2.5, -2.5); ctx.fillStyle = 'rgba(255,246,220,.75)'; moldPath(type); ctx.fill(); ctx.restore();
+  ctx.fillStyle = '#c98a45'; ctx.strokeStyle = '#8a5a2b'; ctx.lineWidth = 3;
+  moldPath(type); ctx.fill(); ctx.stroke();
+  if (type === 'shell') {
+    for (let k = 0; k <= 4; k++) {
+      const a = Math.PI * 1.15 + k * Math.PI * 0.7 / 4;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * S, Math.sin(a) * S); ctx.stroke();
+    }
+  }
+  if (type === 'bucket') { ctx.beginPath(); ctx.arc(0, -S * 0.5, S * 0.8, Math.PI, Math.PI * 2); ctx.stroke(); }
+  ctx.restore();
+}
+
+function stampAt(x, y) {
+  stamps.push({ type: mold, x, y, rot: (Math.random() - 0.5) * 0.5 });
+  if (stamps.length > 400) stamps.shift();
+  tone(160, 0.12, 'sine', 0.3);
+}
+
+function drawSand() {
+  ctx.fillStyle = '#f2d59c'; ctx.fillRect(0, 0, W, H);
+  for (const [x, y, dark] of speck) { ctx.fillStyle = dark ? '#e2b872' : '#fbe6b8'; ctx.fillRect(x, y, 2, 2); }
+}
+
+cv.addEventListener('pointerdown', e => {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === 'suspended') ac.resume();
+  down = true; lastX = e.clientX; lastY = e.clientY; stampAt(lastX, lastY);
+});
+cv.addEventListener('pointermove', e => {
+  px = e.clientX; py = e.clientY;
+  if (down && Math.hypot(px - lastX, py - lastY) > S * 0.9) { stampAt(px, py); lastX = px; lastY = py; }
+});
+cv.addEventListener('pointerleave', () => { px = -999; py = -999; });
+addEventListener('pointerup', () => down = false);
+addEventListener('pointercancel', () => down = false);
+
+document.querySelectorAll('[data-mold]').forEach(b => b.onclick = () => {
+  mold = b.dataset.mold;
+  document.querySelectorAll('[data-mold]').forEach(x => x.classList.toggle('on', x === b));
+});
+$('clear').onclick = () => { stamps = []; };
+$('mute').onclick = () => { muted = !muted; $('mute').textContent = 'Sound: ' + (muted ? 'Off' : 'On'); };
+
+function frame() {
+  drawSand();
+  for (const st of stamps) drawStamp(st.type, st.x, st.y, st.rot, 1);
+  if (px > -900) drawStamp(mold, px, py, 0, 0.35);
+  requestAnimationFrame(frame);
+}
+
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

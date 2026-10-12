@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Bug Hunt</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#9ddc78;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  #hud{position:fixed;top:12px;left:0;right:0;display:flex;justify-content:center;gap:12px;flex-wrap:wrap;padding:0 10px;pointer-events:none}
+  #hud>div{background:#fff;color:#1d3b2a;font-size:24px;font-weight:800;padding:10px 18px;border-radius:16px;box-shadow:0 4px 0 rgba(0,0,0,.18);display:flex;align-items:center;gap:10px}
+  #dot{width:26px;height:26px;border-radius:50%;border:3px solid #1d3b2a}
+  #bar{position:fixed;left:0;right:0;bottom:14px;display:flex;justify-content:center;pointer-events:none}
+  #bar button{pointer-events:auto;font:700 22px system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px 20px;border:0;border-radius:18px;background:#fff;color:#1d3b2a;box-shadow:0 4px 0 rgba(0,0,0,.2);cursor:pointer}
+  #bar button:active{transform:translateY(2px)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div>Tap the <span id="dot"></span><span id="name"></span> bugs</div>
+  <div id="count">Caught: 0</div>
+</div>
+<div id="bar"><button id="mute">Sound: On</button></div>
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const COLORS = { red: '#e53935', blue: '#1e88e5', yellow: '#fdd835', purple: '#8e24aa' };
+const NAMES = Object.keys(COLORS);
+let W, H, HR, BR, holes = [], bugs = [], parts = [], caught = 0, target = '', ac = null, muted = false, spawnT = 0.5;
+
+function resize() {
+  const d = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * d; cv.height = H * d;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  layoutHoles();
+}
+addEventListener('resize', resize);
+
+function layoutHoles() {
+  const cols = Math.max(3, Math.floor(W / 150)), top = H * 0.25, bot = H - 110;
+  const rows = Math.max(2, Math.floor((bot - top) / 140));
+  const cw = W / cols, rh = (bot - top) / rows;
+  HR = Math.min(cw, rh) * 0.28;
+  BR = Math.max(24, HR * 0.9);
+  holes = [];
+  bugs = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++)
+    holes.push({ x: (c + 0.5) * cw, y: top + (r + 0.5) * rh, busy: false });
+}
+
+function tone(f, d, type = 'sine', v = 0.25) {
+  if (!ac || muted) return;
+  const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 1.4, t + d);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + d + 0.02);
+}
+
+function setTarget() {
+  const pool = NAMES.filter(n => n !== target);
+  target = pool[(Math.random() * pool.length) | 0];
+  $('name').textContent = target;
+  $('dot').style.background = COLORS[target];
+}
+
+function spawnBug() {
+  const free = holes.filter(h => !h.busy);
+  if (!free.length) return;
+  const hole = free[(Math.random() * free.length) | 0];
+  hole.busy = true;
+  const color = Math.random() < 0.4 ? target : NAMES[(Math.random() * NAMES.length) | 0];
+  bugs.push({ hole, color, rise: 0, phase: 'rising', timer: 0, shake: 0 });
+}
+
+function sparkle(x, y, col) {
+  for (let k = 0; k < 14; k++) parts.push({ x, y, vx: (Math.random() - 0.5) * 320, vy: (Math.random() - 0.5) * 320 - 80, life: 0.6, col });
+}
+
+function bugY(b) { return b.hole.y - b.rise * BR * 1.1; }
+
+function tapBug(b) {
+  if (b.color === target) {
+    caught++;
+    $('count').textContent = 'Caught: ' + caught;
+    sparkle(b.hole.x, bugY(b), COLORS[b.color]);
+    tone(880, 0.25);
+    b.phase = 'falling';
+    if (caught % 5 === 0) setTarget();
+  } else {
+    b.shake = 0.5; b.phase = 'falling';
+    tone(180, 0.2, 'square', 0.12);
+  }
+}
+
+function update(dt) {
+  spawnT -= dt;
+  if (spawnT <= 0) { spawnT = 0.6 + Math.random() * 0.6; if (bugs.length < 7) spawnBug(); }
+  for (let i = bugs.length - 1; i >= 0; i--) {
+    const b = bugs[i];
+    if (b.shake > 0) b.shake -= dt;
+    if (b.phase === 'rising') {
+      b.rise += dt * 2.5;
+      if (b.rise >= 1) { b.rise = 1; b.phase = 'up'; b.timer = 2.5 + Math.random() * 1.5; }
+    } else if (b.phase === 'up') {
+      b.timer -= dt;
+      if (b.timer <= 0) b.phase = 'falling';
+    } else {
+      b.rise -= dt * 2.5;
+      if (b.rise <= 0) { b.hole.busy = false; bugs.splice(i, 1); }
+    }
+  }
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt; p.vy += 500 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+}
+
+function drawBg() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#b9ea8e'); g.addColorStop(1, '#7fc65a');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 40; i++) {
+    const x = ((i * 397) % 1000) / 1000 * W, y = ((i * 613) % 1000) / 1000 * H;
+    ctx.fillStyle = ['#ff7aa2', '#ffd23f', '#ffffff'][i % 3];
+    ctx.beginPath(); ctx.arc(x, y, Math.max(5, W / 120), 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawHole(h) {
+  ctx.fillStyle = '#6b4a2b'; ctx.beginPath(); ctx.ellipse(h.x, h.y, HR * 1.25, HR * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#3d2817'; ctx.beginPath(); ctx.ellipse(h.x, h.y, HR, HR * 0.38, 0, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawBug(b) {
+  const x = b.hole.x, y = bugY(b), r = BR;
+  const sx = b.shake > 0 ? Math.sin(b.shake * 80) * 6 : 0;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, W, b.hole.y); ctx.clip();
+  ctx.translate(sx, 0);
+  ctx.strokeStyle = '#2b2b2b'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  for (const s of [-1, 1]) for (const dy of [-0.5, 0, 0.5]) {
+    ctx.beginPath(); ctx.moveTo(x + s * r * 0.7, y + dy * r); ctx.lineTo(x + s * r * 1.25, y + dy * r + r * 0.35); ctx.stroke();
+  }
+  ctx.fillStyle = COLORS[b.color];
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke();
+  for (const s of [-1, 1]) {
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(x + s * r * 0.35, y - r * 0.55, r * 0.22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2b2b2b';
+    ctx.beginPath(); ctx.arc(x + s * r * 0.38, y - r * 0.55, r * 0.1, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+cv.addEventListener('pointerdown', e => {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === 'suspended') ac.resume();
+  for (const b of bugs) {
+    if (b.phase === 'falling' || b.rise < 0.6) continue;
+    if ((b.hole.x - e.clientX) ** 2 + (bugY(b) - e.clientY) ** 2 < (BR * 1.3) ** 2) { tapBug(b); return; }
+  }
+});
+
+$('mute').onclick = () => { muted = !muted; $('mute').textContent = 'Sound: ' + (muted ? 'Off' : 'On'); };
+
+resize();
+setTarget();
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt);
+  drawBg();
+  for (const h of holes) drawHole(h);
+  for (const b of bugs) drawBug(b);
+  for (const p of parts) {
+    ctx.globalAlpha = Math.max(0, p.life * 2); ctx.fillStyle = p.col;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

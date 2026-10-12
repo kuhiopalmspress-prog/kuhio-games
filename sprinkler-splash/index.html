@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Sprinkler Splash</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#4fbaf5;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  #score{position:fixed;top:14px;left:18px;font-size:30px;font-weight:800;color:#fff;text-shadow:0 2px 5px rgba(0,0,0,.35);pointer-events:none}
+  #hint{position:fixed;top:14px;left:0;right:0;text-align:center;font-size:22px;font-weight:700;color:#fff;text-shadow:0 2px 5px rgba(0,0,0,.35);pointer-events:none}
+  #bar{position:fixed;left:0;right:0;bottom:14px;display:flex;justify-content:center;pointer-events:none}
+  #bar button{pointer-events:auto;font:700 22px system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px 20px;border:0;border-radius:18px;background:#fff;color:#1d3b2a;box-shadow:0 4px 0 rgba(0,0,0,.2);cursor:pointer}
+  #bar button:active{transform:translateY(2px)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="score">Awake: 0 / 5</div>
+<div id="hint">Hold and drag to aim the sprinkler at the sleepy flowers</div>
+<div id="bar"><button id="mute">Sound: On</button></div>
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const N = 5;
+let W, H, FR, SX, SY, drops = [], parts = [], spraying = false, px = 0, py = 0, emitT = 0, banner = 0, ac = null, muted = false;
+const flowers = Array.from({ length: N }, () => ({ x: 0, y: 0, thirst: 0, awake: false }));
+
+function resize() {
+  const d = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * d; cv.height = H * d;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  FR = Math.min(W / 14, H * 0.07, 46);
+  SX = W / 2; SY = H * 0.84;
+  flowers.forEach((f, i) => { f.x = W * (i + 1) / (N + 1); f.y = H * 0.7; });
+}
+addEventListener('resize', resize);
+
+const headY = f => f.y - FR * 1.6 + (f.awake ? 0 : FR * 0.35);
+
+function tone(f, d, type = 'sine', v = 0.25) {
+  if (!ac || muted) return;
+  const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 1.4, t + d);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + d + 0.02);
+}
+
+function wake(f) {
+  f.awake = true; f.thirst = 1;
+  tone(660, 0.35, 'triangle', 0.3);
+  for (let k = 0; k < 16; k++) parts.push({ x: f.x, y: headY(f), vx: (Math.random() - 0.5) * 320, vy: (Math.random() - 0.5) * 320 - 160, life: 0.7, col: '#ffd23f' });
+  if (flowers.every(g => g.awake)) { banner = 2.5; tone(523, 0.5, 'triangle', 0.3); }
+}
+
+function update(dt) {
+  emitT -= dt;
+  if (spraying && emitT <= 0) {
+    emitT = 0.03;
+    const ang = Math.atan2(py - SY, px - SX) + (Math.random() - 0.5) * 0.2;
+    const sp = 520 + Math.random() * 180;
+    drops.push({ x: SX, y: SY, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, life: 2 });
+  }
+  for (const d of drops) {
+    d.vy += 900 * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.life -= dt;
+    for (const f of flowers) {
+      if (!f.awake && Math.hypot(d.x - f.x, d.y - headY(f)) < FR * 1.1) {
+        f.thirst = Math.min(1, f.thirst + 0.12); d.life = 0;
+        if (f.thirst >= 1) wake(f);
+        break;
+      }
+    }
+  }
+  drops = drops.filter(d => d.life > 0 && d.y < H + 20);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt; p.vy += 500 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+  if (banner > 0) {
+    banner -= dt;
+    if (banner <= 0) flowers.forEach(f => { f.awake = false; f.thirst = 0; });
+  }
+  $('score').textContent = 'Awake: ' + flowers.filter(f => f.awake).length + ' / ' + N;
+}
+
+function drawSky() {
+  const g = ctx.createLinearGradient(0, 0, 0, H * 0.7);
+  g.addColorStop(0, '#4fbaf5'); g.addColorStop(1, '#c8efff');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fff6b0';
+  ctx.beginPath(); ctx.arc(W * 0.88, H * 0.14, Math.min(W, H) * 0.06, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#58bd45'; ctx.fillRect(0, H * 0.7, W, H * 0.3);
+}
+
+function drawFlower(f, t) {
+  const r = FR, hx = f.x, bob = f.awake ? Math.sin(t * 4 + f.x) * r * 0.08 : 0;
+  const cy = headY(f) + bob;
+  ctx.strokeStyle = '#2e7d32'; ctx.lineWidth = r * 0.14; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(f.x, f.y); ctx.quadraticCurveTo(f.x, f.y - r * 0.9, hx, cy); ctx.stroke();
+  ctx.fillStyle = f.awake ? '#ffd23f' : '#c9b26b';
+  for (let i = 0; i < 8; i++) {
+    const a = i * Math.PI / 4;
+    ctx.beginPath(); ctx.arc(hx + Math.cos(a) * r * 0.72, cy + Math.sin(a) * r * 0.72, r * 0.3, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = f.awake ? '#6d4c41' : '#8d7b5a';
+  ctx.beginPath(); ctx.arc(hx, cy, r * 0.55, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#2b2b2b'; ctx.fillStyle = '#2b2b2b'; ctx.lineWidth = Math.max(2, r * 0.08);
+  for (const s of [-1, 1]) {
+    const ex = hx + s * r * 0.2, ey = cy - r * 0.1;
+    if (f.awake) { ctx.beginPath(); ctx.arc(ex, ey, r * 0.08, 0, Math.PI * 2); ctx.fill(); }
+    else { ctx.beginPath(); ctx.arc(ex, ey, r * 0.13, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke(); }
+  }
+  ctx.beginPath();
+  if (f.awake) ctx.arc(hx, cy + r * 0.1, r * 0.25, 0.1 * Math.PI, 0.9 * Math.PI);
+  else ctx.arc(hx, cy + r * 0.2, r * 0.1, 0, Math.PI * 2);
+  ctx.stroke();
+  if (!f.awake) {
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fillRect(f.x - r * 0.8, f.y + r * 0.35, r * 1.6, r * 0.22);
+    ctx.fillStyle = '#2196f3'; ctx.fillRect(f.x - r * 0.8, f.y + r * 0.35, r * 1.6 * f.thirst, r * 0.22);
+    ctx.fillStyle = '#3b5b8a'; ctx.font = `700 ${Math.round(r * 0.6)}px system-ui`; ctx.textAlign = 'left';
+    ctx.fillText('z', hx + r * 0.7, cy - r * 0.9);
+  }
+}
+
+function draw(t) {
+  drawSky();
+  ctx.fillStyle = '#2e7d4f'; ctx.fillRect(SX - FR * 0.12, SY - FR * 0.5, FR * 0.24, FR * 0.5);
+  ctx.fillStyle = '#9ad8ff'; ctx.beginPath(); ctx.arc(SX, SY - FR * 0.55, FR * 0.3, Math.PI, 0); ctx.fill();
+  if (spraying) {
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 3; ctx.setLineDash([6, 10]);
+    ctx.beginPath(); ctx.moveTo(SX, SY); ctx.lineTo(px, py); ctx.stroke(); ctx.setLineDash([]);
+  }
+  for (const f of flowers) drawFlower(f, t);
+  ctx.fillStyle = 'rgba(160,225,255,.95)';
+  for (const d of drops) { ctx.beginPath(); ctx.arc(d.x, d.y, Math.max(3, FR * 0.12), 0, Math.PI * 2); ctx.fill(); }
+  for (const p of parts) {
+    ctx.globalAlpha = Math.max(0, p.life * 2); ctx.fillStyle = p.col;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  if (banner > 0) {
+    ctx.fillStyle = '#fff'; ctx.font = '800 44px system-ui,-apple-system,"Segoe UI",sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('All awake! Great job!', W / 2, H * 0.4);
+  }
+}
+
+cv.addEventListener('pointerdown', e => {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === 'suspended') ac.resume();
+  spraying = true; px = e.clientX; py = e.clientY;
+});
+cv.addEventListener('pointermove', e => { px = e.clientX; py = e.clientY; });
+addEventListener('pointerup', () => spraying = false);
+addEventListener('pointercancel', () => spraying = false);
+
+$('mute').onclick = () => { muted = !muted; $('mute').textContent = 'Sound: ' + (muted ? 'Off' : 'On'); };
+
+resize();
+let last = performance.now(), t = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
+  update(dt);
+  draw(t);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Garden Shape Match</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#e9f8d8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  #bar{position:fixed;left:0;right:0;bottom:14px;display:flex;justify-content:center;pointer-events:none}
+  #bar button{pointer-events:auto;font:700 22px system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px 20px;border:0;border-radius:18px;background:#fff;color:#1d3b2a;box-shadow:0 4px 0 rgba(0,0,0,.2);cursor:pointer}
+  #bar button:active{transform:translateY(2px)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="bar"><button id="mute">Sound: On</button></div>
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const SHAPES = [
+  { type: 'circle', name: 'Tomato', color: '#e53935' },
+  { type: 'square', name: 'Squash', color: '#7cb342' },
+  { type: 'triangle', name: 'Carrot', color: '#fb8c00' },
+  { type: 'star', name: 'Starfruit', color: '#fdd835' },
+];
+let W, H, S, outlines = [], items = [], drag = null, banner = 0, round = 1, parts = [], ac = null, muted = false;
+const slotX = i => W * (i + 1) / 5;
+
+function resize() {
+  const d = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * d; cv.height = H * d;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  S = Math.min(W / 6, H * 0.12, 100);
+  layout();
+}
+addEventListener('resize', resize);
+
+function layout() {
+  outlines = SHAPES.map((s, i) => ({ type: s.type, x: slotX(i), y: H * 0.36 }));
+  for (const it of items) {
+    if (it.placed) { const o = outlines.find(o => o.type === it.type); it.x = o.x; it.y = o.y; }
+    else if (!it.dragging) { it.x = slotX(it.slot); it.y = H * 0.72; }
+  }
+}
+
+function newRound() {
+  const order = SHAPES.map((s, i) => i).sort(() => Math.random() - 0.5);
+  items = SHAPES.map((s, i) => ({ ...s, slot: order[i], placed: false, dragging: false, x: 0, y: 0 }));
+  banner = 0;
+  layout();
+}
+
+function tone(f, d, type = 'sine', v = 0.25) {
+  if (!ac || muted) return;
+  const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 1.4, t + d);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + d + 0.02);
+}
+
+function sparkle(x, y, col) {
+  for (let k = 0; k < 16; k++) parts.push({ x, y, vx: (Math.random() - 0.5) * 360, vy: (Math.random() - 0.5) * 360 - 120, life: 0.7, col });
+}
+
+function shapePath(type, x, y, s) {
+  ctx.beginPath();
+  if (type === 'circle') ctx.arc(x, y, s, 0, Math.PI * 2);
+  else if (type === 'square') ctx.rect(x - s * 0.85, y - s * 0.85, s * 1.7, s * 1.7);
+  else if (type === 'triangle') { ctx.moveTo(x, y - s); ctx.lineTo(x + s * 0.95, y + s * 0.7); ctx.lineTo(x - s * 0.95, y + s * 0.7); ctx.closePath(); }
+  else {
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? s * 0.45 : s;
+      ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+    }
+    ctx.closePath();
+  }
+}
+
+function label(text, x, y) {
+  ctx.font = '700 24px system-ui,-apple-system,"Segoe UI",sans-serif';
+  ctx.textAlign = 'center'; ctx.lineWidth = 6; ctx.strokeStyle = '#fff'; ctx.fillStyle = '#1d3b2a';
+  ctx.strokeText(text, x, y); ctx.fillText(text, x, y);
+}
+
+function pointerOn(e) { return { x: e.clientX, y: e.clientY }; }
+
+cv.addEventListener('pointerdown', e => {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === 'suspended') ac.resume();
+  if (banner > 0) return;
+  const p = pointerOn(e);
+  for (const it of items) {
+    if (it.placed) continue;
+    if (Math.hypot(it.x - p.x, it.y - p.y) < S * 0.7) {
+      drag = { it, dx: it.x - p.x, dy: it.y - p.y };
+      it.dragging = true;
+      return;
+    }
+  }
+});
+
+cv.addEventListener('pointermove', e => {
+  if (!drag) return;
+  drag.it.x = e.clientX + drag.dx; drag.it.y = e.clientY + drag.dy;
+});
+
+function release() {
+  if (!drag) return;
+  const it = drag.it;
+  it.dragging = false; drag = null;
+  const o = outlines.find(o => o.type === it.type);
+  if (Math.hypot(o.x - it.x, o.y - it.y) < S * 0.9) {
+    it.placed = true; it.x = o.x; it.y = o.y;
+    sparkle(o.x, o.y, SHAPES.find(s => s.type === it.type).color);
+    tone(660, 0.25, 'triangle', 0.3);
+    if (items.every(i => i.placed)) { banner = 2.5; tone(523, 0.4, 'triangle', 0.3); }
+  } else {
+    it.x = slotX(it.slot); it.y = H * 0.72;
+    tone(200, 0.15, 'square', 0.1);
+  }
+}
+addEventListener('pointerup', release);
+addEventListener('pointercancel', release);
+
+$('mute').onclick = () => { muted = !muted; $('mute').textContent = 'Sound: ' + (muted ? 'Off' : 'On'); };
+
+function drawBg() {
+  ctx.fillStyle = '#e9f8d8'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#b97a4b'; ctx.fillRect(0, H * 0.6, W, H * 0.4);
+  ctx.fillStyle = '#9c6436';
+  for (let y = H * 0.6 + 14; y < H; y += 28) ctx.fillRect(0, y, W, 3);
+  ctx.fillStyle = '#5d4037'; ctx.font = '700 28px system-ui,-apple-system,"Segoe UI",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Drag each vegetable onto its shape', W / 2, H * 0.12);
+  ctx.font = '700 22px system-ui,-apple-system,"Segoe UI",sans-serif';
+  ctx.fillText('Round ' + round, W / 2, H * 0.12 + 32);
+}
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (banner > 0) { banner -= dt; if (banner <= 0) { round++; newRound(); } }
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt; p.vy += 500 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+
+  drawBg();
+  ctx.textAlign = 'center';
+  for (const o of outlines) {
+    shapePath(o.type, o.x, o.y, S);
+    ctx.setLineDash([12, 8]); ctx.strokeStyle = '#5d4037'; ctx.lineWidth = 5; ctx.stroke(); ctx.setLineDash([]);
+    label(o.type, o.x, o.y + S * 1.35);
+  }
+  for (const it of items) {
+    shapePath(it.type, it.x, it.y, S * 0.9);
+    ctx.fillStyle = it.color; ctx.fill();
+    ctx.strokeStyle = '#3e2723'; ctx.lineWidth = 3; ctx.stroke();
+    if (!it.placed) label(it.name, it.x, it.y + S * 1.35);
+  }
+  for (const p of parts) {
+    ctx.globalAlpha = Math.max(0, p.life * 2); ctx.fillStyle = p.col;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  if (banner > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fillRect(W * 0.1, H * 0.5, W * 0.8, 90);
+    ctx.fillStyle = '#1d3b2a'; ctx.font = '800 36px system-ui,-apple-system,"Segoe UI",sans-serif';
+    ctx.fillText('The garden is full! Great job!', W / 2, H * 0.5 + 56);
+  }
+  requestAnimationFrame(frame);
+}
+
+let last = performance.now();
+resize();
+newRound();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
