@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Sloth Sensei: Undead Dojo</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  .hud{position:fixed;pointer-events:none;color:#fff;font-weight:800;text-shadow:0 2px 4px rgba(0,0,0,.8)}
+  #hp,#focus{left:14px;width:44vw;font-size:20px}
+  #hp{top:12px}
+  #focus{top:74px;font-size:18px}
+  .bar{height:18px;background:rgba(0,0,0,.5);border-radius:9px;overflow:hidden;margin-top:4px;border:2px solid rgba(255,255,255,.7)}
+  .bar i{display:block;height:100%;width:100%}
+  #hpFill{background:#ff5252}
+  #focusFill{background:#40c4ff}
+  #info{top:12px;right:14px;font-size:20px;text-align:right;white-space:pre-line}
+  button{font:800 22px system-ui,-apple-system,"Segoe UI",sans-serif;border:0;color:#1d3b2a;background:#fff;box-shadow:0 5px 0 rgba(0,0,0,.35);touch-action:none;cursor:pointer}
+  button:active{transform:translateY(3px)}
+  .act{position:fixed;pointer-events:auto;border-radius:50%}
+  #fire{right:14px;bottom:14px;width:124px;height:124px;background:#ffd23f;font-size:26px}
+  #slash{right:150px;bottom:24px;width:104px;height:104px;background:#7ee07a}
+  #focusBtn{right:14px;bottom:152px;width:124px;height:58px;border-radius:29px;background:#40c4ff;font-size:20px}
+  #mute{top:92px;right:14px;padding:10px 14px;border-radius:14px;font-size:18px}
+  #over{position:fixed;inset:0;background:rgba(10,20,15,.84);display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:20px;box-sizing:border-box;color:#fff;text-align:center}
+  #over h1{margin:0;font-size:38px}
+  #over p{margin:0;font-size:22px;max-width:520px;line-height:1.35}
+  .promo{display:none;background:#fff;color:#1d3b2a;border-radius:18px;padding:16px 18px;max-width:340px;flex-direction:column;gap:6px;font-size:20px}
+  .promo small{font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:#5d6e62;font-weight:700}
+  .promo a{display:none;align-self:flex-start;margin-top:6px;padding:12px 16px;border-radius:14px;background:#ffd23f;color:#1d3b2a;text-decoration:none;font-weight:800;font-size:20px;box-shadow:0 4px 0 rgba(0,0,0,.25)}
+  #next{font-size:28px;padding:16px 36px;border-radius:24px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hp" class="hud">Health<div class="bar"><i id="hpFill"></i></div></div>
+<div id="focus" class="hud">Sloth Focus<div class="bar"><i id="focusFill"></i></div></div>
+<div id="info" class="hud"></div>
+<button id="mute" class="act">Sound: On</button>
+<button id="slash" class="act">SLASH</button>
+<button id="focusBtn" class="act">FOCUS</button>
+<button id="fire" class="act">FIRE</button>
+<div id="over">
+  <h1 id="ovTitle"></h1>
+  <p id="ovText"></p>
+  <div id="promo" class="promo">
+    <small>Sponsored</small>
+    <b>Sloth Sensei gear is here</b>
+    <span>Streetwear for slow-and-steady warriors. The new line just dropped.</span>
+    <a id="shop" target="_blank" rel="noopener">Shop the line</a>
+  </div>
+  <button id="next">Start</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const SHOP_URL = ''; // paste the Sloth Sensei gear store link here before launch
+const MAP = [
+  "################",
+  "#..............#",
+  "#.####....####.#",
+  "#.#..........#.#",
+  "#.#.######...#.#",
+  "#...#....#...#.#",
+  "#.###.#..#.#.#.#",
+  "#.....#....#...#",
+  "#.###.#.##.###.#",
+  "#...#.....#....#",
+  "#.#.#.###.#.##.#",
+  "#.....#......#.#",
+  "#.###.#.####.#.#",
+  "#.....#........#",
+  "#.###.######.###",
+  "################"
+];
+const FOV = 66 * Math.PI / 180, COL = 3, MAXD = 18;
+const WALLS = [['#7b5e48', '#5c4536'], ['#55697a', '#3d4e5b'], ['#8a4f4f', '#653737']];
+const TYPES = {
+  shambler: { hp: 2, sp: 0.9, dmg: 8, sz: 1.0, col: '#7aa36b', r: 0.3 },
+  runner:   { hp: 1, sp: 1.9, dmg: 6, sz: 0.85, col: '#b3c96f', r: 0.25 },
+  brute:    { hp: 5, sp: 0.6, dmg: 16, sz: 1.3, col: '#5f7a55', r: 0.4 }
+};
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+let W, H, zbuf = [];
+let px = 1.5, py = 1.5, pa = Math.PI / 2;
+let hp = 100, focus = 0.5, level = 1, kills = 0, state = 'title';
+let zombies = [], spawnT = 1.5, fireCd = 0, fireT = 0, slashT = 0, slashDone = true, dmgT = 0, msgT = 0, msg = '';
+let fxT = 0, moving = false, holdFocus = false, focusId = null, fireHeld = false, fireId = null;
+let joy = null, look = null, keys = {}, ac = null, muted = false;
+
+const goal = () => 8 + level * 4;
+const open = (x, y) => ((MAP[Math.floor(y)] || '')[Math.floor(x)] === '.');
+
+function resize() {
+  const d = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * d; cv.height = H * d;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+}
+addEventListener('resize', resize);
+
+function unlock() {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === 'suspended') ac.resume();
+}
+function tone(f, d, type = 'sine', v = 0.2) {
+  if (!ac || muted) return;
+  const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 0.6, t + d);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + d + 0.02);
+}
+
+function cast(ang) {
+  const dx = Math.cos(ang) || 1e-9, dy = Math.sin(ang) || 1e-9;
+  const ddx = Math.abs(1 / dx), ddy = Math.abs(1 / dy);
+  let mx = Math.floor(px), my = Math.floor(py);
+  const sx = dx < 0 ? -1 : 1, sy = dy < 0 ? -1 : 1;
+  let sdx = (dx < 0 ? px - mx : mx + 1 - px) * ddx;
+  let sdy = (dy < 0 ? py - my : my + 1 - py) * ddy;
+  let side = 0;
+  for (let i = 0; i < 80; i++) {
+    if (sdx < sdy) { sdx += ddx; mx += sx; side = 0; }
+    else { sdy += ddy; my += sy; side = 1; }
+    if (!open(mx + 0.5, my + 0.5)) break;
+  }
+  const dist = side ? sdy - ddy : sdx - ddx;
+  return { dist, side, v: (Math.abs(mx) * 7 + Math.abs(my) * 13) % 3 };
+}
+
+function buildField() {
+  const f = MAP.map(row => row.split('').map(() => Infinity));
+  const sx = Math.floor(px), sy = Math.floor(py), q = [[sx, sy]];
+  f[sy][sx] = 0;
+  for (let i = 0; i < q.length; i++) {
+    const [x, y] = q[i];
+    for (const [dx, dy] of DIRS) {
+      const nx = x + dx, ny = y + dy;
+      if (MAP[ny] && MAP[ny][nx] === '.' && f[ny][nx] === Infinity) { f[ny][nx] = f[y][x] + 1; q.push([nx, ny]); }
+    }
+  }
+  return f;
+}
+
+function steer(z, field, dt, slow) {
+  const T = TYPES[z.t];
+  const cx = Math.floor(z.x), cy = Math.floor(z.y);
+  let tx = px, ty = py, best = field[cy][cx];
+  for (const [dx, dy] of DIRS) {
+    const v = field[cy + dy] && field[cy + dy][cx + dx];
+    if (v !== undefined && v < best) { best = v; tx = cx + dx + 0.5; ty = cy + dy + 0.5; }
+  }
+  const dx = tx - z.x, dy = ty - z.y, d = Math.hypot(dx, dy);
+  if (d < 0.02) return;
+  const s = Math.min(d, T.sp * slow * dt);
+  const mx = dx / d * s, my = dy / d * s;
+  if (open(z.x + mx + Math.sign(mx) * T.r, z.y)) z.x += mx;
+  if (open(z.x, z.y + my + Math.sign(my) * T.r)) z.y += my;
+}
+
+function spawnZombie() {
+  for (let i = 0; i < 60; i++) {
+    const x = Math.floor(Math.random() * MAP[0].length), y = Math.floor(Math.random() * MAP.length);
+    if (open(x + 0.5, y + 0.5) && Math.hypot(x + 0.5 - px, y + 0.5 - py) > 5) {
+      const r = Math.random();
+      const t = r < 0.55 ? 'shambler' : (r < 0.8 || level < 2) ? 'runner' : 'brute';
+      zombies.push({ x: x + 0.5, y: y + 0.5, t, hp: TYPES[t].hp, flash: 0, cd: 0.5 });
+      return;
+    }
+  }
+}
+
+function hitZ(z, n) {
+  z.hp -= n; z.flash = 0.12;
+  tone(z.hp > 0 ? 260 : 420, 0.1, 'square', 0.12);
+  if (z.hp <= 0) { kills++; focus = Math.min(1, focus + 0.1); msg = 'Down!'; msgT = 0.6; }
+}
+
+function hurt(n) {
+  hp = Math.max(0, hp - n); dmgT = 0.35; tone(120, 0.2, 'sawtooth', 0.15);
+  if (hp <= 0) { state = 'down'; showOver('Knocked out!', 'The horde got you this time. Shake it off and try again.', true, 'Try again'); }
+}
+
+function fire() {
+  unlock();
+  if (state !== 'play' || fireCd > 0) return;
+  fireCd = 0.35; fireT = 0.12; tone(180, 0.12, 'square', 0.15);
+  const wallD = zbuf[Math.floor(W / 2 / COL)] ?? MAXD;
+  let best = null, bd = Infinity;
+  for (const z of zombies) {
+    const dx = z.x - px, dy = z.y - py, d = Math.hypot(dx, dy);
+    let a = Math.atan2(dy, dx) - pa; a = Math.atan2(Math.sin(a), Math.cos(a));
+    const perp = d * Math.cos(a);
+    if (perp > 0.3 && perp < wallD && Math.abs(a) < 0.35 * TYPES[z.t].sz / d && d < bd) { best = z; bd = d; }
+  }
+  if (best) hitZ(best, 1);
+}
+
+function slash() {
+  unlock();
+  if (state !== 'play' || slashT > 0) return;
+  slashT = 0.35; slashDone = false; tone(900, 0.12, 'sawtooth', 0.1);
+}
+
+function update(dt) {
+  fxT += dt;
+  fireCd = Math.max(0, fireCd - dt); fireT = Math.max(0, fireT - dt); slashT = Math.max(0, slashT - dt);
+  dmgT = Math.max(0, dmgT - dt); msgT = Math.max(0, msgT - dt);
+  if (state !== 'play') return;
+
+  const slow = holdFocus && focus > 0 ? 0.35 : 1;
+  if (holdFocus && focus > 0) focus = Math.max(0, focus - 0.25 * dt);
+  else focus = Math.min(1, focus + 0.02 * dt);
+
+  let ix = 0, iy = 0;
+  if (joy) { ix += joy.x; iy -= joy.y; }
+  if (keys.KeyW || keys.ArrowUp) iy += 1;
+  if (keys.KeyS || keys.ArrowDown) iy -= 1;
+  if (keys.KeyD) ix += 1;
+  if (keys.KeyA) ix -= 1;
+  if (keys.KeyQ || keys.ArrowLeft) pa -= 2.2 * dt;
+  if (keys.KeyE || keys.ArrowRight) pa += 2.2 * dt;
+  const L = Math.hypot(ix, iy);
+  if (L > 1) { ix /= L; iy /= L; }
+  moving = L > 0.05;
+  const fx = Math.cos(pa), fy = Math.sin(pa);
+  const mx = (fx * iy - fy * ix) * 2.6 * dt, my = (fy * iy + fx * ix) * 2.6 * dt;
+  if (open(px + mx + Math.sign(mx) * 0.2, py)) px += mx;
+  if (open(px, py + my + Math.sign(my) * 0.2)) py += my;
+
+  if (fireHeld || keys.Space) fire();
+
+  spawnT -= dt;
+  if (spawnT <= 0 && zombies.length < 3 + level * 2) { spawnT = Math.max(0.8, 2.2 - level * 0.2); spawnZombie(); }
+
+  if (slashT > 0 && slashT <= 0.2 && !slashDone) {
+    slashDone = true;
+    for (const z of zombies) {
+      const dx = z.x - px, dy = z.y - py, d = Math.hypot(dx, dy);
+      let a = Math.atan2(dy, dx) - pa; a = Math.atan2(Math.sin(a), Math.cos(a));
+      if (z.hp > 0 && d < 1.5 && Math.abs(a) < 0.9) hitZ(z, 2);
+    }
+  }
+  zombies = zombies.filter(z => z.hp > 0);
+
+  const field = buildField();
+  for (const z of zombies) {
+    z.flash = Math.max(0, z.flash - dt);
+    z.cd = Math.max(0, z.cd - dt);
+    steer(z, field, dt, slow);
+    if (Math.hypot(px - z.x, py - z.y) < 0.7 && z.cd <= 0) { z.cd = 1; hurt(TYPES[z.t].dmg); }
+    if (state !== 'play') return;
+  }
+
+  if (kills >= goal()) { state = 'clear'; showOver('District ' + level + ' cleared!', 'Nice work, sensei. The next district gets rowdier.', true, 'Next district'); }
+}
+
+function drawZombie(cx, feet, sz, z, T) {
+  ctx.fillStyle = z.flash > 0 ? '#ffffff' : T.col;
+  ctx.fillRect(cx - sz * 0.22, feet - sz * 0.5, sz * 0.44, sz * 0.5);
+  ctx.fillRect(cx - sz * 0.2, feet - sz * 0.12, sz * 0.16, sz * 0.12);
+  ctx.fillRect(cx + sz * 0.04, feet - sz * 0.12, sz * 0.16, sz * 0.12);
+  ctx.fillRect(cx - sz * 0.36, feet - sz * 0.48, sz * 0.14, sz * 0.36);
+  ctx.fillRect(cx + sz * 0.22, feet - sz * 0.48, sz * 0.14, sz * 0.36);
+  ctx.beginPath(); ctx.arc(cx, feet - sz * 0.62, sz * 0.16, 0, Math.PI * 2); ctx.fill();
+  if (T === TYPES.brute) { ctx.fillStyle = '#607d8b'; ctx.fillRect(cx - sz * 0.24, feet - sz * 0.5, sz * 0.48, sz * 0.2); }
+  ctx.fillStyle = z.flash > 0 ? '#ff0000' : '#e53935';
+  ctx.beginPath();
+  ctx.arc(cx - sz * 0.06, feet - sz * 0.64, sz * 0.03, 0, Math.PI * 2);
+  ctx.arc(cx + sz * 0.06, feet - sz * 0.64, sz * 0.03, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function render() {
+  const hz = H / 2;
+  let g = ctx.createLinearGradient(0, 0, 0, hz);
+  g.addColorStop(0, '#1d2140'); g.addColorStop(1, '#4b3b5c');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, hz);
+  g = ctx.createLinearGradient(0, hz, 0, H);
+  g.addColorStop(0, '#3a362f'); g.addColorStop(1, '#171511');
+  ctx.fillStyle = g; ctx.fillRect(0, hz, W, H - hz);
+
+  const n = Math.ceil(W / COL);
+  for (let c = 0; c < n; c++) {
+    const ang = pa + ((c + 0.5) / n - 0.5) * FOV;
+    const r = cast(ang);
+    const perp = Math.max(0.05, r.dist * Math.cos(ang - pa));
+    zbuf[c] = perp;
+    const lh = H / perp, top = hz - lh / 2;
+    ctx.fillStyle = WALLS[r.v][r.side];
+    ctx.fillRect(c * COL, top, COL + 1, lh);
+    ctx.fillStyle = `rgba(10,8,14,${Math.min(0.85, perp / MAXD)})`;
+    ctx.fillRect(c * COL, top, COL + 1, lh);
+  }
+
+  const list = zombies.map(z => {
+    const dx = z.x - px, dy = z.y - py;
+    let a = Math.atan2(dy, dx) - pa; a = Math.atan2(Math.sin(a), Math.cos(a));
+    return { z, a, d: Math.hypot(dx, dy) * Math.cos(a) };
+  }).filter(s => Math.abs(s.a) < FOV / 2 + 0.2 && s.d > 0.3).sort((p, q) => q.d - p.d);
+  for (const s of list) {
+    const sx = W / 2 + (s.a / (FOV / 2)) * (W / 2);
+    const col = Math.min(zbuf.length - 1, Math.max(0, Math.floor(sx / COL)));
+    if (s.d > zbuf[col]) continue;
+    const T = TYPES[s.z.t];
+    drawZombie(sx, hz + H / (2 * s.d), H / s.d * T.sz * 0.9, s.z, T);
+  }
+}
+
+function drawHands() {
+  const bob = moving ? Math.sin(fxT * 9) * 5 : 0;
+  const gx = W * 0.6, gy = H - 118 + bob + fireT * 90;
+  ctx.fillStyle = '#2d2f36'; ctx.fillRect(gx, gy, 110, 52);
+  ctx.fillRect(gx + 34, gy + 52, 34, 46);
+  ctx.fillStyle = '#9aa3ad'; ctx.fillRect(gx + 110, gy + 12, 34, 12);
+  ctx.save();
+  ctx.translate(W * 0.28, H - 36 + bob);
+  const k = slashT > 0 ? 1 - slashT / 0.35 : 0;
+  ctx.rotate(slashT > 0 ? -2.4 + k * 3.4 : -0.5);
+  ctx.fillStyle = '#e6edf5'; ctx.fillRect(-6, -H * 0.42, 12, H * 0.42);
+  ctx.fillStyle = '#ffd23f'; ctx.fillRect(-9, -8, 18, 8);
+  ctx.restore();
+  ctx.fillStyle = '#b08a5a';
+  ctx.beginPath(); ctx.arc(W * 0.28, H - 36 + bob, 30, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawOverlay() {
+  if (state === 'play') {
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    ctx.fillRect(W / 2 - 1.5, H / 2 - 9, 3, 18); ctx.fillRect(W / 2 - 9, H / 2 - 1.5, 18, 3);
+  }
+  if (joy) {
+    const R = Math.min(W, H) * 0.12;
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(joy.ox, joy.oy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.6)';
+    ctx.beginPath(); ctx.arc(joy.ox + joy.x * R, joy.oy + joy.y * R, R * 0.4, 0, Math.PI * 2); ctx.fill();
+  }
+  if (dmgT > 0) { ctx.fillStyle = `rgba(200,0,0,${dmgT * 0.6})`; ctx.fillRect(0, 0, W, H); }
+  if (msgT > 0) {
+    ctx.globalAlpha = Math.min(1, msgT * 2);
+    ctx.fillStyle = '#fff'; ctx.font = '800 40px system-ui,-apple-system,"Segoe UI",sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(msg, W / 2, H * 0.32);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function syncHud() {
+  $('hpFill').style.width = hp + '%';
+  $('focusFill').style.width = focus * 100 + '%';
+  $('info').textContent = 'District ' + level + '\nKills ' + kills + ' / ' + goal();
+}
+
+function showOver(title, text, promo, btn) {
+  $('ovTitle').textContent = title;
+  $('ovText').textContent = text;
+  $('promo').style.display = promo ? 'flex' : 'none';
+  $('shop').style.display = promo && SHOP_URL ? 'inline-block' : 'none';
+  $('shop').href = SHOP_URL;
+  $('next').textContent = btn;
+  $('over').style.display = 'flex';
+}
+
+$('next').onclick = () => {
+  unlock();
+  if (state === 'clear') { level++; hp = Math.min(100, hp + 40); }
+  else { level = 1; hp = 100; }
+  kills = 0; zombies = []; spawnT = 1.5; state = 'play';
+  $('over').style.display = 'none';
+};
+
+$('mute').onclick = () => { unlock(); muted = !muted; $('mute').textContent = 'Sound: ' + (muted ? 'Off' : 'On'); };
+
+$('fire').addEventListener('pointerdown', e => { e.preventDefault(); fireHeld = true; fireId = e.pointerId; fire(); });
+$('slash').addEventListener('pointerdown', e => { e.preventDefault(); slash(); });
+$('focusBtn').addEventListener('pointerdown', e => {
+  e.preventDefault(); unlock();
+  if (state === 'play') { holdFocus = true; focusId = e.pointerId; }
+});
+
+cv.addEventListener('pointerdown', e => {
+  unlock();
+  if (state !== 'play') return;
+  if (e.clientX < W / 2 && !joy) joy = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: 0, y: 0 };
+  else if (!look) look = { id: e.pointerId, lx: e.clientX };
+});
+cv.addEventListener('pointermove', e => {
+  if (joy && e.pointerId === joy.id) {
+    const R = Math.min(W, H) * 0.12;
+    const dx = e.clientX - joy.ox, dy = e.clientY - joy.oy, m = Math.hypot(dx, dy);
+    const k = m > 0 ? Math.min(1, m / R) / m : 0;
+    joy.x = dx * k; joy.y = dy * k;
+  }
+  if (look && e.pointerId === look.id) { pa += (e.clientX - look.lx) * 0.006; look.lx = e.clientX; }
+});
+function release(e) {
+  if (joy && e.pointerId === joy.id) joy = null;
+  if (look && e.pointerId === look.id) look = null;
+  if (focusId !== null && e.pointerId === focusId) { holdFocus = false; focusId = null; }
+  if (fireId !== null && e.pointerId === fireId) { fireHeld = false; fireId = null; }
+}
+addEventListener('pointerup', release);
+addEventListener('pointercancel', release);
+
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+  if (e.code === 'KeyF') slash();
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') holdFocus = true;
+  if (e.code === 'Enter' && $('over').style.display === 'flex') $('next').click();
+});
+addEventListener('keyup', e => {
+  keys[e.code] = false;
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') holdFocus = false;
+});
+
+resize();
+showOver('Sloth Sensei', 'Undead Dojo. Drag the left side to move, drag the right side to look. FIRE shoots, SLASH cuts, and FOCUS slows the horde.', false, 'Start');
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt);
+  render();
+  drawHands();
+  drawOverlay();
+  syncHud();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
