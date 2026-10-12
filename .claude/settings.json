@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push origin main)",
+      "Bash(git ls-remote *)",
+      "Bash(npm install)",
+      "Bash(npm install *)",
+      "Bash(npm run sync)",
+      "Bash(npx cap *)",
+      "Bash(./backyard-bubbles/mobile/android/gradlew assembleDebug)",
+      "Bash(./backyard-bubbles/mobile/android/gradlew bundleRelease)",
+      "Bash(python3 *bubbles_test.py)"
+    ]
+  }
+}
